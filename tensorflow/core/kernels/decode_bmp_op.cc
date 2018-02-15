@@ -70,7 +70,40 @@ class DecodeBmpOp : public OpKernel {
     // bitmaps.
     OP_REQUIRES(context, (channels_ == 3 || channels_ == 4),
                 errors::InvalidArgument(
-                    "Number of channels must be 3 or 4, was ", channels_));
+                    "Number of channels must be 1, 3 or 4, was ", channels_));
+
+    OP_REQUIRES(context, width > 0 && header_size >= 0,
+                errors::InvalidArgument("Width must be positive"));
+    OP_REQUIRES(context, header_size >= 0,
+                errors::InvalidArgument("header size must be nonnegative"));
+
+    // The real requirement is < 2^31 minus some headers and channel data,
+    // so rounding down to something that's still ridiculously big.
+    OP_REQUIRES(
+        context,
+        (static_cast<int64>(width) * std::abs(static_cast<int64>(height))) <
+            static_cast<int64>(std::numeric_limits<int32_t>::max() / 8),
+        errors::InvalidArgument(
+            "Total possible pixel bytes must be less than 2^30"));
+
+    const int32 abs_height = abs(height);
+
+    // there may be padding bytes when the width is not a multiple of 4 bytes
+    // 8 * channels == bits per pixel
+    const int row_size = (8 * channels_ * width + 31) / 32 * 4;
+
+    const int64 last_pixel_offset = static_cast<int64>(header_size) +
+                                    (abs_height - 1) * row_size +
+                                    (width - 1) * channels_;
+
+    // [expected file size] = [last pixel offset] + [last pixel size=channels]
+    const int64 expected_file_size = last_pixel_offset + channels_;
+
+    OP_REQUIRES(
+        context, (expected_file_size <= input.size()),
+        errors::InvalidArgument("Incomplete bmp content, requires at least ",
+                                expected_file_size, " bytes, got ",
+                                input.size(), " bytes"));
 
     // if height is negative, data layout is top down
     // otherwise, it's bottom up
@@ -80,12 +113,12 @@ class DecodeBmpOp : public OpKernel {
     Tensor* output = nullptr;
     OP_REQUIRES_OK(
         context, context->allocate_output(
-                     0, TensorShape({abs(height), width, channels_}), &output));
+                     0, TensorShape({abs_height, width, channels_}), &output));
 
     const uint8* bmp_pixels = &img_bytes[header_size];
 
-    Decode(bmp_pixels, output->flat<uint8>().data(), width, abs(height),
-           channels_, top_down);
+    Decode(bmp_pixels, row_size, output->flat<uint8>().data(), width,
+           abs_height, channels_, top_down);
   }
 
   uint8* Decode(const uint8* input, uint8* const output, const int width,
