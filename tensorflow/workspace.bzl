@@ -15,6 +15,11 @@ load("@io_bazel_rules_closure//closure:defs.bzl", "filegroup_external")
 load("//tensorflow/tools/def_file_filter:def_file_filter_configure.bzl",
      "def_file_filter_configure")
 
+# Sanitize a dependency so that it works correctly from code that includes
+# TensorFlow as a submodule.
+def clean_dep(dep):
+  return str(Label(dep))
+
 def _extract_version_number(bazel_version):
   """Extracts the semantic version number from a version string
 
